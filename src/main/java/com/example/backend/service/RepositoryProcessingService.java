@@ -13,6 +13,7 @@ import com.example.backend.parser.model.ParsedEntity;
 import com.example.backend.repository.CodeEntityRepository;
 import com.example.backend.repository.FileRepository;
 import com.example.backend.repository.RepositoryRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -24,7 +25,6 @@ import java.util.Set;
 @Service
 public class RepositoryProcessingService {
 
-	private static final long MAX_SOURCE_FILE_SIZE = 1_000_000L;
 	private static final Map<String, String> LANGUAGES = Map.of(
 			".java", "Java",
 			".js", "JavaScript",
@@ -44,6 +44,8 @@ public class RepositoryProcessingService {
 	private final DependencyGraphService dependencyGraphService;
 	private final ArchitectureAnalysisService architectureAnalysisService;
 	private final HealthAnalysisService healthAnalysisService;
+	private final int maxFiles;
+	private final long maxSourceFileSize;
 
 	public RepositoryProcessingService(
 			GitHubClient gitHubClient,
@@ -53,7 +55,9 @@ public class RepositoryProcessingService {
 			CodeEntityRepository codeEntityRepository,
 			DependencyGraphService dependencyGraphService,
 			ArchitectureAnalysisService architectureAnalysisService,
-			HealthAnalysisService healthAnalysisService) {
+			HealthAnalysisService healthAnalysisService,
+			@Value("${github.analysis.max-files:5000}") int maxFiles,
+			@Value("${github.analysis.max-file-size:500000}") long maxSourceFileSize) {
 		this.gitHubClient = gitHubClient;
 		this.fileRepository = fileRepository;
 		this.repositoryRepository = repositoryRepository;
@@ -62,6 +66,8 @@ public class RepositoryProcessingService {
 		this.dependencyGraphService = dependencyGraphService;
 		this.architectureAnalysisService = architectureAnalysisService;
 		this.healthAnalysisService = healthAnalysisService;
+		this.maxFiles = maxFiles;
+		this.maxSourceFileSize = maxSourceFileSize;
 	}
 
 	public void process(Repository repository, String owner, String name, GitHubTreeResponse tree) {
@@ -70,7 +76,10 @@ public class RepositoryProcessingService {
 		try {
 			dependencyGraphService.clear(repository.getId());
 			fileRepository.deleteAllByRepositoryId(repository.getId());
+			int processedFiles = 0;
 			for (GitHubTreeResponse.GitHubTreeItem item : tree.tree()) {
+				if (processedFiles >= maxFiles) break;
+				if (isSupportedSourceFile(item == null ? null : item.path()) && isWithinSize(item)) processedFiles++;
 				processItem(repository, owner, name, item);
 			}
 			dependencyGraphService.rebuild(repository.getId());
@@ -91,14 +100,14 @@ public class RepositoryProcessingService {
 			return;
 		}
 		long size = item.size() == null ? 0L : item.size();
-		if (size > MAX_SOURCE_FILE_SIZE || isMinified(item.path())) {
+		if (size > maxSourceFileSize || isMinified(item.path())) {
 			return;
 		}
 
 		GitHubContentResponse source = gitHubClient.getFileContent(owner, name, item.path());
 		String content = decodeContent(source);
 		long contentSize = content.getBytes(StandardCharsets.UTF_8).length;
-		if (contentSize > MAX_SOURCE_FILE_SIZE) {
+		if (contentSize > maxSourceFileSize) {
 			return;
 		}
 		String path = item.path();
@@ -145,6 +154,10 @@ public class RepositoryProcessingService {
 
 	private boolean isMinified(String path) {
 		return path.toLowerCase(Locale.ROOT).matches(".*\\.min\\.(js|jsx|ts|tsx)$");
+	}
+
+	private boolean isWithinSize(GitHubTreeResponse.GitHubTreeItem item) {
+		return item != null && (item.size() == null || item.size() <= maxSourceFileSize);
 	}
 
 	private String extensionOf(String path) {

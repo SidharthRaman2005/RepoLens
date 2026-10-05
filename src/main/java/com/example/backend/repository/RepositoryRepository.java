@@ -11,4 +11,6 @@ public interface RepositoryRepository extends JpaRepository<Repository, Long> {
 	List<Repository> findAllByUserIdOrderByAnalyzedAtDesc(Long userId);
 
 	Optional<Repository> findByIdAndUserId(Long id, Long userId);
+
+	Optional<Repository> findByUserIdAndOwnerIgnoreCaseAndNameIgnoreCase(Long userId, String owner, String name);
 }

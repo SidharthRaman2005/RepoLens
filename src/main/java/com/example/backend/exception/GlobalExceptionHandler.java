@@ -1,9 +1,11 @@
 package com.example.backend.exception;
 
 import com.example.backend.github.exception.GitHubApiException;
+import com.example.backend.github.exception.GitHubAuthenticationException;
 import com.example.backend.github.exception.GitHubNetworkException;
 import com.example.backend.github.exception.GitHubRateLimitException;
 import com.example.backend.github.exception.GitHubRepositoryNotFoundException;
+import com.example.backend.github.exception.GitHubTimeoutException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -68,25 +70,40 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(GitHubRepositoryNotFoundException.class)
 	public ResponseEntity<ApiError> handleGitHubRepositoryNotFound(
 			GitHubRepositoryNotFoundException exception, HttpServletRequest request) {
-		return error(HttpStatus.NOT_FOUND, exception.getMessage(), request);
+		return error(HttpStatus.NOT_FOUND, exception.getMessage(), request, "GITHUB_REPOSITORY_NOT_FOUND");
 	}
 
 	@ExceptionHandler(GitHubRateLimitException.class)
 	public ResponseEntity<ApiError> handleGitHubRateLimit(
 			GitHubRateLimitException exception, HttpServletRequest request) {
-		return error(HttpStatus.TOO_MANY_REQUESTS, exception.getMessage(), request);
+		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(new ApiError(Instant.now(), 429,
+				"Too Many Requests", exception.getMessage(), request.getRequestURI(),
+				"GITHUB_RATE_LIMIT_EXCEEDED", exception.getRetryAt(), exception.getRemaining()));
+	}
+
+	@ExceptionHandler(GitHubAuthenticationException.class)
+	public ResponseEntity<ApiError> handleGitHubAuthentication(
+			GitHubAuthenticationException exception, HttpServletRequest request) {
+		return error(HttpStatus.BAD_GATEWAY, "GitHub authentication is not configured on the backend", request,
+				"GITHUB_AUTHENTICATION_FAILED");
+	}
+
+	@ExceptionHandler(GitHubTimeoutException.class)
+	public ResponseEntity<ApiError> handleGitHubTimeout(
+			GitHubTimeoutException exception, HttpServletRequest request) {
+		return error(HttpStatus.REQUEST_TIMEOUT, exception.getMessage(), request, "GITHUB_TIMEOUT");
 	}
 
 	@ExceptionHandler(GitHubNetworkException.class)
 	public ResponseEntity<ApiError> handleGitHubNetwork(
 			GitHubNetworkException exception, HttpServletRequest request) {
-		return error(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), request);
+		return error(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), request, "GITHUB_REQUEST_FAILED");
 	}
 
 	@ExceptionHandler(GitHubApiException.class)
 	public ResponseEntity<ApiError> handleGitHubApi(
 			GitHubApiException exception, HttpServletRequest request) {
-		return error(HttpStatus.BAD_GATEWAY, exception.getMessage(), request);
+		return error(HttpStatus.BAD_GATEWAY, exception.getMessage(), request, "GITHUB_REQUEST_FAILED");
 	}
 
 	@ExceptionHandler(EmptyRepositoryException.class)
@@ -111,6 +128,12 @@ public class GlobalExceptionHandler {
 
 	private ResponseEntity<ApiError> error(HttpStatus status, String message, HttpServletRequest request) {
 		ApiError body = new ApiError(Instant.now(), status.value(), status.getReasonPhrase(), message, request.getRequestURI());
+		return ResponseEntity.status(status).body(body);
+	}
+
+	private ResponseEntity<ApiError> error(HttpStatus status, String message, HttpServletRequest request, String code) {
+		ApiError body = new ApiError(Instant.now(), status.value(), status.getReasonPhrase(), message,
+				request.getRequestURI(), code, null, null);
 		return ResponseEntity.status(status).body(body);
 	}
 }

@@ -2,6 +2,7 @@ package com.example.backend.service;
 
 import com.example.backend.dto.RepositoryResponse;
 import com.example.backend.entity.Repository;
+import com.example.backend.entity.RepositoryProcessingStatus;
 import com.example.backend.entity.User;
 import com.example.backend.exception.EmptyRepositoryException;
 import com.example.backend.exception.InvalidCredentialsException;
@@ -45,6 +46,12 @@ public class RepositoryService {
 	public RepositoryResponse analyze(String submittedUrl, String authenticatedEmail) {
 		GitHubCoordinates coordinates = parseRepositoryUrl(submittedUrl);
 		User user = findUser(authenticatedEmail);
+		Repository existing = repositoryRepository
+				.findByUserIdAndOwnerIgnoreCaseAndNameIgnoreCase(user.getId(), coordinates.owner(), coordinates.name())
+				.orElse(null);
+		if (existing != null && existing.getProcessingStatus() == RepositoryProcessingStatus.COMPLETED) {
+			return toResponse(existing);
+		}
 		GitHubRepositoryResponse metadata = gitHubClient.getRepository(coordinates.owner(), coordinates.name());
 
 		if (metadata.default_branch() == null || metadata.default_branch().isBlank()) {
