@@ -86,7 +86,8 @@ public class GitHubClient {
 
 	public List<GitHubCommitSummary> getCommits(String owner, String name, int page, int perPage) {
 		return getList("/repos/{owner}/{name}/commits?page={page}&per_page={perPage}",
-				Map.of("owner", owner, "name", name, "page", page, "perPage", perPage));
+				Map.of("owner", owner, "name", name, "page", page, "perPage", perPage),
+				new ParameterizedTypeReference<List<GitHubCommitSummary>>() { });
 	}
 
 	public GitHubCommitDetail getCommit(String owner, String name, String sha) {
@@ -130,10 +131,15 @@ public class GitHubClient {
 	}
 
 	private <T> List<T> getList(String path, Map<String, ?> variables) {
+		return getList(path, variables, new ParameterizedTypeReference<List<T>>() { });
+	}
+
+	private <T> List<T> getList(String path, Map<String, ?> variables,
+			ParameterizedTypeReference<List<T>> responseType) {
 		try {
 			ensureAvailable();
 			ResponseEntity<List<T>> response = restClient.get().uri(path, variables).retrieve()
-					.toEntity(new ParameterizedTypeReference<>() { });
+					.toEntity(responseType);
 			recordRateLimit(path, response.getHeaders());
 			return response.getBody() == null ? List.of() : response.getBody();
 		} catch (HttpClientErrorException exception) {

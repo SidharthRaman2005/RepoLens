@@ -2,6 +2,7 @@ package com.example.backend.github;
 
 import com.example.backend.github.exception.GitHubAuthenticationException;
 import com.example.backend.github.exception.GitHubRateLimitException;
+import com.example.backend.github.dto.GitHubCommitSummary;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -75,6 +76,24 @@ class GitHubClientTest {
 		assertThatThrownBy(() -> client.getRepository("octo", "repo"))
 				.isInstanceOf(GitHubAuthenticationException.class)
 				.hasMessageNotContaining("bad-token");
+		server.verify();
+	}
+
+	@Test
+	void deserializesCommitPagesIntoTypedSummaries() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitHubClient client = new GitHubClient(builder, "http://github.test", "2022-11-28", "test-token");
+		server.expect(requestTo("http://github.test/repos/octo/repo/commits?page=1&per_page=100"))
+				.andRespond(withSuccess("""
+						[{"sha":"abc123","commit":{"message":"initial commit","author":{"name":"Ada","email":"ada@example.com","date":"2024-01-01T10:00:00Z"},"committer":{"name":"Ada","email":"ada@example.com","date":"2024-01-01T10:00:00Z"}}}]
+						""", MediaType.APPLICATION_JSON));
+
+		var commits = client.getCommits("octo", "repo", 1, 100);
+
+		assertThat(commits).singleElement().isInstanceOf(GitHubCommitSummary.class);
+		assertThat(commits.get(0).sha()).isEqualTo("abc123");
+		assertThat(commits.get(0).commit().message()).isEqualTo("initial commit");
 		server.verify();
 	}
 

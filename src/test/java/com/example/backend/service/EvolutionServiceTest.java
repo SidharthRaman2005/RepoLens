@@ -4,6 +4,7 @@ import com.example.backend.entity.User;
 import com.example.backend.github.GitHubClient;
 import com.example.backend.github.dto.GitHubCommitDetail;
 import com.example.backend.github.dto.GitHubCommitSummary;
+import com.example.backend.github.exception.GitHubRateLimitException;
 import com.example.backend.repository.AnalysisRepository;
 import com.example.backend.repository.CodeEntityRepository;
 import com.example.backend.repository.DependencyRepository;
@@ -13,6 +14,7 @@ import com.example.backend.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -21,6 +23,41 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class EvolutionServiceTest {
+
+    @Test
+    void keepsEvolutionAvailableWhenCommitDetailsAreUnavailable() {
+        GitHubClient client = mock(GitHubClient.class);
+        RepositoryRepository repositories = mock(RepositoryRepository.class);
+        UserRepository users = mock(UserRepository.class);
+        FileRepository files = mock(FileRepository.class);
+        CodeEntityRepository entities = mock(CodeEntityRepository.class);
+        DependencyRepository dependencies = mock(DependencyRepository.class);
+        AnalysisRepository analyses = mock(AnalysisRepository.class);
+        User user = mock(User.class);
+        com.example.backend.entity.Repository repository = mock(com.example.backend.entity.Repository.class);
+        when(users.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(user.getId()).thenReturn(7L);
+        when(repositories.findByIdAndUserId(12L, 7L)).thenReturn(Optional.of(repository));
+        when(repository.getOwner()).thenReturn("owner");
+        when(repository.getName()).thenReturn("repo");
+        when(files.findAllByRepositoryIdOrderByPathAsc(12L)).thenReturn(List.of());
+        when(entities.findAllByFileRepositoryIdOrderByIdAsc(12L)).thenReturn(List.of());
+        when(dependencies.findAllBySourceEntityFileRepositoryId(12L)).thenReturn(List.of());
+        when(analyses.findTopByRepositoryIdOrderByCreatedAtDesc(12L)).thenReturn(Optional.empty());
+        OffsetDateTime date = OffsetDateTime.parse("2024-01-01T10:00:00Z");
+        GitHubCommitSummary summary = summary("first", "project setup", date, "pom.xml");
+        when(client.getCommits("owner", "repo", 1, 100)).thenReturn(List.of(summary));
+        when(client.getCommit("owner", "repo", "first"))
+                .thenThrow(new GitHubRateLimitException(0L, Instant.now().plusSeconds(60)));
+
+        EvolutionService service = new EvolutionService(client, repositories, users, files, entities, dependencies, analyses, 500);
+
+        var response = service.evolution(12L, "owner@example.com");
+
+        assertThat(response.activity().totalCommits()).isEqualTo(1);
+        assertThat(response.timeline()).hasSize(1);
+        assertThat(response.timeline().get(0).commitCount()).isEqualTo(1);
+    }
 
     @Test
     void retrievesPaginatedCommitsBuildsTimelineAndCachesResult() {

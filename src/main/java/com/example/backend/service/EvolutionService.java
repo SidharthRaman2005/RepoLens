@@ -11,6 +11,7 @@ import com.example.backend.exception.RepositoryNotFoundException;
 import com.example.backend.github.GitHubClient;
 import com.example.backend.github.dto.GitHubCommitDetail;
 import com.example.backend.github.dto.GitHubCommitSummary;
+import com.example.backend.github.exception.GitHubApiException;
 import com.example.backend.repository.AnalysisRepository;
 import com.example.backend.repository.CodeEntityRepository;
 import com.example.backend.repository.FileRepository;
@@ -18,6 +19,7 @@ import com.example.backend.repository.DependencyRepository;
 import com.example.backend.repository.RepositoryRepository;
 import com.example.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,13 +57,16 @@ public class EvolutionService {
     private final DependencyRepository dependencyRepository;
     private final AnalysisRepository analysisRepository;
     private final int maxHistoryCommits;
+    private final int maxDetailCommits;
     private final ConcurrentMap<Long, CachedEvolution> cache = new ConcurrentHashMap<>();
 
+    @Autowired
     public EvolutionService(GitHubClient gitHubClient, RepositoryRepository repositoryRepository,
             UserRepository userRepository, FileRepository fileRepository,
             CodeEntityRepository codeEntityRepository, DependencyRepository dependencyRepository,
             AnalysisRepository analysisRepository,
-            @Value("${github.analysis.max-commits:500}") int maxHistoryCommits) {
+            @Value("${github.analysis.max-commits:500}") int maxHistoryCommits,
+            @Value("${github.analysis.max-detail-commits:30}") int maxDetailCommits) {
         this.gitHubClient = gitHubClient;
         this.repositoryRepository = repositoryRepository;
         this.userRepository = userRepository;
@@ -70,6 +75,15 @@ public class EvolutionService {
         this.dependencyRepository = dependencyRepository;
         this.analysisRepository = analysisRepository;
         this.maxHistoryCommits = maxHistoryCommits;
+        this.maxDetailCommits = Math.max(0, Math.min(maxDetailCommits, maxHistoryCommits));
+    }
+
+    public EvolutionService(GitHubClient gitHubClient, RepositoryRepository repositoryRepository,
+            UserRepository userRepository, FileRepository fileRepository,
+            CodeEntityRepository codeEntityRepository, DependencyRepository dependencyRepository,
+            AnalysisRepository analysisRepository, int maxHistoryCommits) {
+        this(gitHubClient, repositoryRepository, userRepository, fileRepository, codeEntityRepository,
+                dependencyRepository, analysisRepository, maxHistoryCommits, maxHistoryCommits);
     }
 
     @Transactional(readOnly = true)
@@ -133,9 +147,18 @@ public class EvolutionService {
         }
         List<CommitEvidence> result = new ArrayList<>();
         Set<String> seenShas = new HashSet<>();
+        int detailIndex = 0;
         for (GitHubCommitSummary summary : summaries.stream().limit(maxHistoryCommits).toList()) {
             if (summary == null || summary.sha() == null || !seenShas.add(summary.sha())) continue;
-            GitHubCommitDetail detail = gitHubClient.getCommit(owner, name, summary.sha());
+            GitHubCommitDetail detail = null;
+            if (detailIndex++ < maxDetailCommits) {
+                try {
+                    detail = gitHubClient.getCommit(owner, name, summary.sha());
+                } catch (GitHubApiException exception) {
+                    // Commit summaries still contain dates and messages, so one unavailable
+                    // detail request must not make the whole evolution view unusable.
+                }
+            }
             result.add(toEvidence(summary, detail));
         }
         return result.stream().filter(commit -> commit.date() != null)

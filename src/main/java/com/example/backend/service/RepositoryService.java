@@ -143,18 +143,18 @@ public class RepositoryService {
 
 	private GitHubCoordinates parseRepositoryUrl(String submittedUrl) {
 		try {
-			URI uri = new URI(submittedUrl.trim());
+			String value = submittedUrl == null ? "" : submittedUrl.trim();
+			if (!value.matches("(?i)^https?://.*")) value = "https://" + value;
+			URI uri = new URI(value);
 			if (!"https".equalsIgnoreCase(uri.getScheme())
-					|| !"github.com".equalsIgnoreCase(uri.getHost())
-					|| uri.getQuery() != null
-					|| uri.getFragment() != null) {
+					|| uri.getHost() == null
+					|| (!"github.com".equalsIgnoreCase(uri.getHost())
+						&& !"www.github.com".equalsIgnoreCase(uri.getHost()))) {
 				throw new InvalidGitHubUrlException();
 			}
 
-			String[] segments = uri.getPath().split("/", -1);
-			if (segments.length < 3 || segments.length > 4
-					|| segments[1].isBlank() || segments[2].isBlank()
-					|| (segments.length == 4 && !segments[3].isBlank())) {
+			String[] segments = uri.getPath().split("/");
+			if (segments.length < 3 || segments[1].isBlank() || segments[2].isBlank()) {
 				throw new InvalidGitHubUrlException();
 			}
 

@@ -3,6 +3,8 @@ package com.example.backend.service;
 import com.example.backend.dto.GraphEdgeResponse;
 import com.example.backend.dto.GraphNodeResponse;
 import com.example.backend.dto.GraphResponse;
+import com.example.backend.dto.ArchitectureModuleResponse;
+import com.example.backend.dto.ModuleEdgeResponse;
 import com.example.backend.entity.CodeEntity;
 import com.example.backend.entity.CodeEntityType;
 import com.example.backend.entity.Dependency;
@@ -83,7 +85,39 @@ public class DependencyGraphService {
 				.map(this::node)
 				.toList();
 		List<GraphEdgeResponse> edges = dependencies.stream().map(this::edge).toList();
-		return new GraphResponse(nodes, edges);
+		return new GraphResponse(nodes, edges, modules(entities, dependencies), moduleEdges(dependencies));
+	}
+
+	private List<ArchitectureModuleResponse> modules(List<CodeEntity> entities, List<Dependency> dependencies) {
+		Map<String, List<CodeEntity>> grouped = entities.stream()
+				.filter(this::isGraphNode)
+				.collect(Collectors.groupingBy(entity -> moduleName(entity.getFile().getPath()),
+						java.util.LinkedHashMap::new, Collectors.toList()));
+		Map<String, Long> dependencyCounts = dependencies.stream()
+				.collect(Collectors.groupingBy(dependency -> moduleName(dependency.getSourceEntity().getFile().getPath()),
+						Collectors.counting()));
+		return grouped.entrySet().stream().map(entry -> {
+			String name = entry.getKey();
+			List<CodeEntity> moduleEntities = entry.getValue();
+			List<GraphNodeResponse> moduleNodes = moduleEntities.stream().map(this::node).toList();
+			int classes = (int) moduleEntities.stream().filter(this::isType).count();
+			int files = (int) moduleEntities.stream().map(entity -> entity.getFile().getPath()).distinct().count();
+			return new ArchitectureModuleResponse("module:" + name, name, name, files, classes,
+					dependencyCounts.getOrDefault(name, 0L).intValue(), moduleNodes);
+		}).toList();
+	}
+
+	private List<ModuleEdgeResponse> moduleEdges(List<Dependency> dependencies) {
+		Map<String, Integer> counts = new HashMap<>();
+		for (Dependency dependency : dependencies) {
+			String source = "module:" + moduleName(dependency.getSourceEntity().getFile().getPath());
+			String target = "module:" + moduleName(dependency.getTargetEntity().getFile().getPath());
+			if (!source.equals(target)) counts.merge(source + "\u0000" + target, 1, Integer::sum);
+		}
+		return counts.entrySet().stream().map(entry -> {
+			String[] modules = entry.getKey().split("\u0000", 2);
+			return new ModuleEdgeResponse(modules[0], modules[1], entry.getValue());
+		}).toList();
 	}
 
 	@Transactional(readOnly = true)
@@ -217,8 +251,30 @@ public class DependencyGraphService {
 		return entity.getFile().getPath() + ":" + entity.getName();
 	}
 
+	private String moduleName(String path) {
+		String normalized = path.replace('\\', '/');
+		String[] parts = normalized.split("/");
+		int sourceIndex = -1;
+		for (int index = 0; index < parts.length - 1; index++) {
+			if ("src".equals(parts[index])) {
+				sourceIndex = index;
+				break;
+			}
+		}
+		int start = sourceIndex >= 0 && sourceIndex + 2 < parts.length
+				&& ("main".equals(parts[sourceIndex + 1]) || "test".equals(parts[sourceIndex + 1]))
+				? sourceIndex + 3 : sourceIndex >= 0 ? sourceIndex + 1 : 0;
+		String[] layers = { "controller", "service", "repository", "domain", "application", "adapter", "infrastructure", "config" };
+		for (int index = start; index < parts.length - 1; index++) {
+			for (String layer : layers) {
+				if (layer.equalsIgnoreCase(parts[index]) && index > start) return parts[index - 1];
+			}
+		}
+		return start < parts.length - 1 ? parts[start] : "(root)";
+	}
+
 	private GraphNodeResponse node(CodeEntity entity) {
-		return new GraphNodeResponse(entity.getId(), entity.getName(), entity.getType().name(), entity.getFile().getName());
+		return new GraphNodeResponse(entity.getId(), entity.getName(), entity.getType().name(), entity.getFile().getPath());
 	}
 
 	private GraphEdgeResponse edge(Dependency dependency) {
